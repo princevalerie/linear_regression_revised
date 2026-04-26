@@ -3,6 +3,7 @@ import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
 import matplotlib.gridspec as gridspec
+import xgboost as xgb
 
 # ─────────────────────────────────────────────
 #  PURE MATH FUNCTIONS  (no sklearn / scipy)
@@ -111,6 +112,22 @@ def build_multivariate(df: pd.DataFrame):
     y_pred = predict(X, beta)
     return beta, y_pred, y, mins, maxs, feature_cols
 
+def build_xgboost(df: pd.DataFrame):
+    feature_cols = ["area", "bedrooms", "bathrooms", "stories",
+                    "mainroad", "guestroom", "basement",
+                    "hotwaterheating", "airconditioning",
+                    "parking", "prefarea", "furnishingstatus"]
+    X_raw = df[feature_cols].values.astype(float)
+    y = df["price"].values.astype(float)
+    X_scaled, mins, maxs = min_max_scale(X_raw)
+    
+    # Train XGBoost
+    model = xgb.XGBRegressor(objective='reg:squarederror', n_estimators=100, learning_rate=0.1, max_depth=3, random_state=42)
+    model.fit(X_scaled, y)
+    y_pred = model.predict(X_scaled)
+    
+    return model, y_pred, y, mins, maxs, feature_cols
+
 # ─────────────────────────────────────────────
 #  PLOT HELPERS
 # ─────────────────────────────────────────────
@@ -200,6 +217,7 @@ tabs = st.tabs([
     "📊 Dataset Overview",
     "📈 Univariate Regression",
     "📉 Multivariate Regression",
+    "🌲 XGBoost Regression",
     "🔮 Prediksi Harga Manual"
 ])
 
@@ -341,14 +359,66 @@ with tabs[2]:
         - MSE yang masih besar mencerminkan keterbatasan asumsi linearitas pada data properti nyata.
         """)
 
-# ── TAB 4: PREDIKSI MANUAL ──────────────────────────────────────
+# ── TAB 4: XGBOOST ──────────────────────────────────────────────
 with tabs[3]:
-    st.subheader("🔮 Prediksi Harga Rumah")
-    st.markdown("Masukkan spesifikasi rumah untuk mendapatkan estimasi harga menggunakan model **Multivariate Linear Regression**.")
+    st.subheader("XGBoost Regression")
+    st.markdown("""
+    Model: **XGBoost (Extreme Gradient Boosting)**
+    
+    Menggunakan **semua fitur** sebagai input. XGBoost adalah algoritma berbasis tree-ensemble yang sangat kuat untuk menangkap hubungan non-linear.
+    """)
 
-    # Rebuild model params (already done, reuse)
-    _, _, _, mins_m, maxs_m, f_cols = build_multivariate(df)
-    beta_m, _, _, _, _, _ = build_multivariate(df)
+    model_xgb, y_pred_xgb, y_xgb, mins_xgb, maxs_xgb, feat_cols = build_xgboost(df)
+
+    mse_xgb = mse(y_xgb, y_pred_xgb)
+    r2_xgb = r_squared(y_xgb, y_pred_xgb)
+    adj_r2_xgb = adj_r_squared(y_xgb, y_pred_xgb, len(feat_cols))
+
+    col1, col2, col3 = st.columns(3)
+    _, y_pred_multi_tmp, y_multi_tmp, _, _, _ = build_multivariate(df)
+    mse_multi_tmp = mse(y_multi_tmp, y_pred_multi_tmp)
+    col1.metric("MSE", f"{mse_xgb:,.0f}", delta=f"{(mse_xgb - mse_multi_tmp)/mse_multi_tmp*100:.1f}% vs Multivariate", delta_color="inverse")
+    col2.metric("R²", f"{r2_xgb:.4f} ({r2_xgb*100:.2f}%)")
+    col3.metric("Adjusted R²", f"{adj_r2_xgb:.4f}")
+
+    st.markdown(interpret_r2(r2_xgb))
+
+    st.subheader("Feature Importance (XGBoost)")
+    importance = model_xgb.feature_importances_
+    fig_imp_xgb, ax = plt.subplots(figsize=(8, 4))
+    colors = plt.cm.Greens(np.linspace(0.4, 0.9, len(feat_cols)))
+    sorted_idx = np.argsort(importance)[::-1]
+    ax.barh([feat_cols[i] for i in sorted_idx], importance[sorted_idx], color=colors)
+    ax.set_xlabel("Relative Importance")
+    ax.set_title("XGBoost Feature Importance")
+    ax.grid(True, alpha=0.3, axis="x")
+    plt.tight_layout()
+    st.pyplot(fig_imp_xgb)
+
+    st.subheader("Actual vs Predicted")
+    fig_xgb = plot_actual_vs_predicted(y_xgb, y_pred_xgb, "XGBoost: Actual vs Predicted")
+    st.pyplot(fig_xgb)
+
+    st.subheader("Analisis Residual")
+    fig_res_xgb = plot_residuals(y_xgb, y_pred_xgb, "Residual Analysis — XGBoost")
+    st.pyplot(fig_res_xgb)
+
+    with st.expander("ℹ️ Interpretasi"):
+        st.markdown(f"""
+        - R² XGBoost biasanya lebih tinggi dari Multivariate (OLS) karena model ini dapat menangkap interaksi dan pola non-linear antar fitur.
+        - Perlu diingat bahwa ini adalah hasil pada set pelatihan. R² yang sangat tinggi dapat mengindikasikan *overfitting*.
+        """)
+
+# ── TAB 5: PREDIKSI MANUAL ──────────────────────────────────────
+with tabs[4]:
+    st.subheader("🔮 Prediksi Harga Rumah")
+    st.markdown("Masukkan spesifikasi rumah untuk mendapatkan estimasi harga.")
+    
+    model_choice = st.radio("Pilih Model untuk Prediksi:", ["Multivariate Linear Regression", "XGBoost Regression"], horizontal=True)
+
+    # Rebuild model params
+    beta_m, _, _, mins_m, maxs_m, f_cols = build_multivariate(df)
+    model_xgb_m, _, _, _, _, _ = build_xgboost(df)
 
     col1, col2 = st.columns(2)
 
@@ -382,8 +452,12 @@ with tabs[3]:
     rng_m = maxs_m - mins_m
     rng_m[rng_m == 0] = 1
     input_scaled = (input_raw - mins_m) / rng_m
-    input_with_intercept = np.hstack([np.ones((1, 1)), input_scaled])
-    price_pred = float(input_with_intercept @ beta_m)
+    
+    if model_choice == "Multivariate Linear Regression":
+        input_with_intercept = np.hstack([np.ones((1, 1)), input_scaled])
+        price_pred = float(input_with_intercept @ beta_m)
+    else:
+        price_pred = float(model_xgb_m.predict(input_scaled)[0])
 
     st.divider()
     if price_pred > 0:
@@ -398,8 +472,12 @@ with tabs[3]:
             st.info(f"📊 Harga ini **{abs(pct):.1f}% di bawah** rata-rata dataset ({avg_price/1e6:.2f}M)")
 
         # Range estimate (±1 RMSE)
-        rmse_multi = np.sqrt(mse(y_multi, y_pred_multi))
-        st.caption(f"Perkiraan rentang: {max(0, price_pred - rmse_multi):,.0f} — {price_pred + rmse_multi:,.0f} (±1 RMSE)")
+        if model_choice == "Multivariate Linear Regression":
+            _, y_pred_tmp, y_tmp, _, _, _ = build_multivariate(df)
+        else:
+            _, y_pred_tmp, y_tmp, _, _, _ = build_xgboost(df)
+        rmse_val = np.sqrt(mse(y_tmp, y_pred_tmp))
+        st.caption(f"Perkiraan rentang: {max(0, price_pred - rmse_val):,.0f} — {price_pred + rmse_val:,.0f} (±1 RMSE)")
     else:
         st.warning("Estimasi harga negatif — coba ubah kombinasi input.")
 
