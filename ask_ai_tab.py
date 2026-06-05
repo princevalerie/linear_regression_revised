@@ -1,45 +1,29 @@
 """
-ask_ai_tab.py
-─────────────────────────────────────────────────────────────────────
-Tab 8 · Ask AI — ChatNVIDIA (LangChain) RAG Chatbot
-Menggunakan langchain-nvidia-ai-endpoints → moonshotai/kimi-k2.6
-
-Konteks RAG (otomatis, ringan — text injection):
-  1. Housing.csv     — dataset lengkap
-  2. main.py         — source code aplikasi
-  3. ask_ai_tab.py   — source code tab AI
-  4. README.md       — dokumentasi
-  5. *.pdf           — paper PDF (teks diekstrak via PyPDF2)
-
-User hanya mengetik — tidak bisa upload file.
-─────────────────────────────────────────────────────────────────────
+ask_ai_tab.py — ChatNVIDIA RAG Chatbot (LangChain)
+Model: moonshotai/kimi-k2.6 via NVIDIA AI Endpoints
+Lightweight RAG: semua konteks di-inject ke system prompt
 """
 
-import os
-import glob
-import textwrap
-import io
+import os, glob, textwrap
 import streamlit as st
-import matplotlib
-import matplotlib.pyplot as plt
 
-matplotlib.use("Agg")
-
-# ── LangChain NVIDIA ────────────────────────────────────────────
+# ── LangChain ──────────────────────────────────────────────────
 try:
     from langchain_nvidia_ai_endpoints import ChatNVIDIA
-    NVIDIA_AVAILABLE = True
+    from langchain_core.messages import SystemMessage, HumanMessage, AIMessage
+    from langchain_core.output_parsers import StrOutputParser
+    LLM_READY = True
 except ImportError:
-    NVIDIA_AVAILABLE = False
+    LLM_READY = False
 
-# ── PDF text extraction ────────────────────────────────────────
+# ── PDF ────────────────────────────────────────────────────────
 try:
     from PyPDF2 import PdfReader
-    PDF_AVAILABLE = True
+    PDF_OK = True
 except ImportError:
-    PDF_AVAILABLE = False
+    PDF_OK = False
 
-# ── dotenv ──────────────────────────────────────────────────────
+# ── dotenv ─────────────────────────────────────────────────────
 try:
     from dotenv import load_dotenv
     load_dotenv()
@@ -47,11 +31,11 @@ except ImportError:
     pass
 
 
-# ──────────────────────────────────────────────
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 #  HELPERS
-# ──────────────────────────────────────────────
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-def _read_text(path):
+def _read(path):
     try:
         with open(path, "r", encoding="utf-8", errors="replace") as f:
             return f.read()
@@ -59,131 +43,93 @@ def _read_text(path):
         return None
 
 
-def _extract_pdf_text(path, max_pages=30):
-    """Ekstrak teks dari PDF menggunakan PyPDF2."""
-    if not PDF_AVAILABLE:
+def _pdf_text(path, max_pages=30):
+    if not PDF_OK:
         return None
     try:
         reader = PdfReader(path)
-        pages = []
-        for i, page in enumerate(reader.pages[:max_pages]):
-            text = page.extract_text()
-            if text:
-                pages.append(f"[Page {i+1}]\n{text}")
-        return "\n\n".join(pages) if pages else None
+        out = []
+        for i, p in enumerate(reader.pages[:max_pages]):
+            t = p.extract_text()
+            if t:
+                out.append(f"[Page {i+1}]\n{t}")
+        return "\n\n".join(out) if out else None
     except Exception:
         return None
 
 
-def _fig_to_png_bytes(fig):
-    buf = io.BytesIO()
-    fig.savefig(buf, format="png", bbox_inches="tight",
-                facecolor=fig.get_facecolor(), dpi=90)
-    buf.seek(0)
-    return buf.read()
-
-
-# ──────────────────────────────────────────────
-#  CHART CAPTURE — dipanggil dari main.py
-# ──────────────────────────────────────────────
-
 def capture_chart(fig, label=""):
-    """Simpan label chart ke session state untuk deskripsi konteks AI."""
-    if "ask_ai_chart_labels" not in st.session_state:
-        st.session_state.ask_ai_chart_labels = []
-    if len(st.session_state.ask_ai_chart_labels) >= 20:
-        st.session_state.ask_ai_chart_labels.pop(0)
-    st.session_state.ask_ai_chart_labels.append(label or f"Chart {len(st.session_state.ask_ai_chart_labels)+1}")
+    """Dipanggil dari main.py — simpan label chart untuk konteks AI."""
+    if "ai_charts" not in st.session_state:
+        st.session_state.ai_charts = []
+    if len(st.session_state.ai_charts) >= 20:
+        st.session_state.ai_charts.pop(0)
+    st.session_state.ai_charts.append(label or f"Chart {len(st.session_state.ai_charts)+1}")
 
 
-# ──────────────────────────────────────────────
-#  BUILD RAG SYSTEM PROMPT (lightweight)
-# ──────────────────────────────────────────────
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+#  RAG SYSTEM PROMPT (cached, lightweight)
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 @st.cache_data(ttl=300)
 def _build_system_prompt():
-    """Build system prompt dengan semua konteks RAG — di-cache 5 menit."""
-    sections = []
-
-    # ── Preamble ──
-    sections.append(textwrap.dedent("""
+    parts = [textwrap.dedent("""\
     Kamu adalah AI assistant expert untuk proyek "House Price Prediction — Linear Regression from Scratch".
-    Kamu memiliki akses ke SEMUA konteks berikut:
+    Kamu memiliki akses PENUH ke dataset, source code, dokumentasi, dan paper yang diberikan di bawah.
 
-    KEMAMPUANMU:
-    - Analisis dataset Housing.csv (545 baris, 13 kolom harga rumah)
-    - Jelaskan implementasi matematis OLS, MSE, R², Adj R² dari source code
-    - Bandingkan 4 model: Univariate, Multivariate +/- Outlier, XGBoost
-    - Debug code Python/Streamlit
-    - Jawab pertanyaan tentang paper Liming Yan 2024
-    - Suggest perbaikan model atau kode
-    - Analisis chart/grafik berdasarkan deskripsi
+    KEMAMPUAN:
+    • Analisis dataset Housing.csv (545 baris, 13 kolom harga rumah)
+    • Jelaskan implementasi OLS, MSE, R², Adj R² dari source code
+    • Bandingkan 4 model: Univariate, Multivariate ± Outlier, XGBoost
+    • Debug code Python/Streamlit
+    • Jawab tentang paper Liming Yan 2024
 
     ATURAN:
-    - Jawab dalam Bahasa Indonesia kecuali diminta Bahasa Inggris
-    - Gunakan format markdown
-    - Sertakan rumus LaTeX jika relevan (wrap dengan $...$)
-    - Jawab ringkas dan informatif
-    - Jika tidak tahu, bilang tidak tahu — jangan mengarang
-    """).strip())
+    • Jawab dalam Bahasa Indonesia kecuali diminta Bahasa Inggris
+    • Gunakan markdown · LaTeX dalam $...$ jika relevan
+    • Ringkas, informatif, akurat
+    • Jangan mengarang — jika tidak tahu, bilang tidak tahu""")]
 
-    # ── Housing.csv ──
-    csv_text = _read_text("Housing.csv")
-    if csv_text:
-        # Kirim header + 30 baris pertama + statistik
-        lines = csv_text.strip().split("\n")
-        sample = "\n".join(lines[:31])
-        sections.append(f"---\n## [DATA] Housing.csv ({len(lines)-1} baris)\n```csv\n{sample}\n```\n... (total {len(lines)-1} baris)")
+    # Dataset
+    csv = _read("Housing.csv")
+    if csv:
+        lines = csv.strip().split("\n")
+        parts.append(f"---\n## [DATA] Housing.csv ({len(lines)-1} rows)\n```csv\n{chr(10).join(lines[:31])}\n```")
 
-    # ── main.py ──
-    code_text = _read_text("main.py")
-    if code_text:
-        # Kirim penuh jika < 15KB, truncate jika lebih
-        if len(code_text) > 15000:
-            snippet = code_text[:15000] + "\n...[truncated]"
-        else:
-            snippet = code_text
-        sections.append(f"---\n## [CODE] main.py\n```python\n{snippet}\n```")
+    # Source code
+    for fname in ["main.py", "ask_ai_tab.py"]:
+        code = _read(fname)
+        if code:
+            s = code[:15000] + ("\n…[truncated]" if len(code) > 15000 else "")
+            parts.append(f"---\n## [CODE] {fname}\n```python\n{s}\n```")
 
-    # ── ask_ai_tab.py ──
-    ai_code = _read_text("ask_ai_tab.py")
-    if ai_code:
-        if len(ai_code) > 8000:
-            snippet = ai_code[:8000] + "\n...[truncated]"
-        else:
-            snippet = ai_code
-        sections.append(f"---\n## [CODE] ask_ai_tab.py\n```python\n{snippet}\n```")
-
-    # ── README.md ──
-    readme = _read_text("README.md")
+    # README
+    readme = _read("README.md")
     if readme:
-        sections.append(f"---\n## [DOC] README.md\n{readme}")
+        parts.append(f"---\n## [DOC] README.md\n{readme}")
 
-    # ── PDF papers ──
-    pdf_paths = glob.glob("*.pdf") + glob.glob("**/*.pdf", recursive=False)
+    # PDFs
     seen = set()
-    for pdf_path in pdf_paths[:2]:
-        abs_path = os.path.abspath(pdf_path)
-        if abs_path in seen:
+    for p in (glob.glob("*.pdf") + glob.glob("**/*.pdf", recursive=False))[:2]:
+        ap = os.path.abspath(p)
+        if ap in seen:
             continue
-        seen.add(abs_path)
-        pdf_text = _extract_pdf_text(pdf_path)
-        if pdf_text:
-            # Limit PDF text
-            if len(pdf_text) > 12000:
-                pdf_text = pdf_text[:12000] + "\n...[truncated]"
-            sections.append(f"---\n## [PAPER] {os.path.basename(pdf_path)}\n{pdf_text}")
+        seen.add(ap)
+        txt = _pdf_text(p)
+        if txt:
+            txt = txt[:12000] + ("\n…[truncated]" if len(txt) > 12000 else "")
+            parts.append(f"---\n## [PAPER] {os.path.basename(p)}\n{txt}")
 
-    return "\n\n".join(sections)
+    return "\n\n".join(parts)
 
 
-# ──────────────────────────────────────────────
-#  NVIDIA ChatNVIDIA CALL
-# ──────────────────────────────────────────────
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+#  LLM (cached)
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-def _call_nvidia(api_key, user_question, history, system_prompt):
-    """Call ChatNVIDIA via LangChain."""
-    client = ChatNVIDIA(
+@st.cache_resource
+def _llm(api_key):
+    return ChatNVIDIA(
         model="moonshotai/kimi-k2.6",
         api_key=api_key,
         temperature=1,
@@ -191,312 +137,261 @@ def _call_nvidia(api_key, user_question, history, system_prompt):
         max_tokens=16384,
     )
 
-    # Build messages: system + history + current question
-    lc_messages = [{"role": "system", "content": system_prompt}]
 
-    for msg in history:
-        lc_messages.append({
-            "role": msg["role"],
-            "content": msg["content"]
-        })
-
-    lc_messages.append({"role": "user", "content": user_question})
-
-    response = client.invoke(lc_messages)
-
-    # Extract content
-    result = ""
-    if hasattr(response, "additional_kwargs") and response.additional_kwargs:
-        reasoning = response.additional_kwargs.get("reasoning_content", "")
-        if reasoning:
-            result += f"<details><summary>💭 Reasoning</summary>\n\n{reasoning}\n\n</details>\n\n"
-    result += response.content
-    return result
+def _to_langchain_messages(system_prompt, history, user_input):
+    """Convert chat history → LangChain message objects."""
+    msgs = [SystemMessage(content=system_prompt)]
+    for m in history:
+        if m["role"] == "user":
+            msgs.append(HumanMessage(content=m["content"]))
+        else:
+            msgs.append(AIMessage(content=m["content"]))
+    msgs.append(HumanMessage(content=user_input))
+    return msgs
 
 
-# ──────────────────────────────────────────────
-#  CUSTOM CSS
-# ──────────────────────────────────────────────
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+#  CSS
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-def _inject_chat_css():
-    st.markdown("""
-    <style>
-    /* ── Clean chatbot styling ─────────────────── */
-    .stChatMessage {
-        border-radius: 16px !important;
-        margin-bottom: 8px !important;
-        padding: 12px 16px !important;
-    }
+_CSS = """
+<style>
+/* ── Chat container scroll area ─────────────── */
+div[data-testid="stVerticalBlockBorderWrapper"]:has(> div > div > div > div[data-testid="stChatMessage"]) {
+    background: rgba(8, 10, 18, 0.4);
+    border: 1px solid rgba(55, 65, 81, 0.3);
+    border-radius: 16px;
+}
 
-    /* User message */
-    .stChatMessage[data-testid="stChatMessage-user"] {
-        background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%) !important;
-        border: 1px solid rgba(96, 165, 250, 0.15) !important;
-    }
+/* ── Message bubbles ────────────────────────── */
+[data-testid="stChatMessage"] {
+    padding: 10px 16px !important;
+    margin: 2px 0 !important;
+    border-radius: 0 !important;
+    background: transparent !important;
+    border-bottom: 1px solid rgba(55, 65, 81, 0.15) !important;
+}
+[data-testid="stChatMessage"]:last-child {
+    border-bottom: none !important;
+}
 
-    /* Assistant message */
-    .stChatMessage[data-testid="stChatMessage-assistant"] {
-        background: linear-gradient(135deg, #0f0f1a 0%, #1a1a2e 100%) !important;
-        border: 1px solid rgba(139, 92, 246, 0.15) !important;
-    }
+/* ── Chat input ─────────────────────────────── */
+[data-testid="stChatInput"] textarea {
+    border-radius: 24px !important;
+    font-size: 0.92em !important;
+}
 
-    /* Chat input styling */
-    .stChatInput {
-        border-radius: 24px !important;
-    }
-    .stChatInput > div {
-        border-radius: 24px !important;
-        border: 1px solid rgba(139, 92, 246, 0.3) !important;
-        background: rgba(15, 15, 26, 0.8) !important;
-    }
-    .stChatInput > div:focus-within {
-        border-color: rgba(139, 92, 246, 0.6) !important;
-        box-shadow: 0 0 20px rgba(139, 92, 246, 0.1) !important;
-    }
+/* ── Welcome card ───────────────────────────── */
+.ai-welcome {
+    text-align: center;
+    padding: 40px 20px 24px;
+}
+.ai-welcome h3 {
+    font-size: 1.35em;
+    margin-bottom: 4px;
+    background: linear-gradient(135deg, #a78bfa, #60a5fa);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+}
+.ai-welcome p {
+    color: #64748b;
+    font-size: 0.88em;
+    margin: 2px 0;
+}
+.ctx-pills {
+    display: flex;
+    justify-content: center;
+    gap: 8px;
+    margin-top: 14px;
+    flex-wrap: wrap;
+}
+.ctx-pill {
+    font-size: 0.73em;
+    padding: 3px 10px;
+    border-radius: 10px;
+    background: rgba(100,116,139,0.1);
+    color: #94a3b8;
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+}
+.ctx-pill .dot {
+    width: 5px; height: 5px;
+    border-radius: 50%;
+    display: inline-block;
+}
+.dot-g { background: #34d399; }
+.dot-y { background: #fbbf24; }
 
-    /* Suggestion buttons */
-    .suggestion-btn button {
-        border-radius: 20px !important;
-        border: 1px solid rgba(139, 92, 246, 0.2) !important;
-        background: rgba(139, 92, 246, 0.05) !important;
-        font-size: 0.82em !important;
-        padding: 6px 14px !important;
-        transition: all 0.2s ease !important;
-    }
-    .suggestion-btn button:hover {
-        background: rgba(139, 92, 246, 0.15) !important;
-        border-color: rgba(139, 92, 246, 0.4) !important;
-        transform: translateY(-1px) !important;
-    }
+/* ── Suggestion chips ───────────────────────── */
+div[data-testid="stHorizontalBlock"] .stButton > button {
+    border-radius: 18px !important;
+    font-size: 0.8em !important;
+    padding: 5px 14px !important;
+    border: 1px solid rgba(139,92,246,0.2) !important;
+    background: rgba(139,92,246,0.04) !important;
+    transition: all 0.15s ease !important;
+    white-space: nowrap !important;
+}
+div[data-testid="stHorizontalBlock"] .stButton > button:hover {
+    background: rgba(139,92,246,0.12) !important;
+    border-color: rgba(139,92,246,0.4) !important;
+}
 
-    /* Welcome card */
-    .welcome-card {
-        background: linear-gradient(135deg, rgba(139, 92, 246, 0.08) 0%, rgba(96, 165, 250, 0.06) 100%);
-        border: 1px solid rgba(139, 92, 246, 0.15);
-        border-radius: 20px;
-        padding: 28px 32px;
-        margin: 16px 0 24px 0;
-        text-align: center;
-    }
-    .welcome-card h2 {
-        margin: 0 0 8px 0;
-        font-size: 1.5em;
-        background: linear-gradient(135deg, #8B5CF6, #60A5FA);
-        -webkit-background-clip: text;
-        -webkit-text-fill-color: transparent;
-    }
-    .welcome-card p {
-        color: #94a3b8;
-        margin: 4px 0;
-        font-size: 0.9em;
-    }
-
-    /* Status bar */
-    .status-bar {
-        display: flex;
-        justify-content: center;
-        gap: 16px;
-        margin-top: 14px;
-        flex-wrap: wrap;
-    }
-    .status-item {
-        display: inline-flex;
-        align-items: center;
-        gap: 5px;
-        font-size: 0.78em;
-        color: #64748b;
-        background: rgba(100, 116, 139, 0.08);
-        padding: 4px 10px;
-        border-radius: 12px;
-    }
-    .status-dot {
-        width: 6px;
-        height: 6px;
-        border-radius: 50%;
-        display: inline-block;
-    }
-    .status-dot.green { background: #34D399; }
-    .status-dot.yellow { background: #FBBF24; }
-    .status-dot.red { background: #F87171; }
-
-    /* Clear button */
-    .clear-btn {
-        position: fixed;
-        bottom: 80px;
-        right: 24px;
-        z-index: 100;
-    }
-    </style>
-    """, unsafe_allow_html=True)
+/* ── Header row ─────────────────────────────── */
+.chat-hdr {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 4px;
+}
+.chat-hdr h3 {
+    margin: 0;
+    font-size: 1.1em;
+    color: #e2e8f0;
+}
+</style>
+"""
 
 
-# ──────────────────────────────────────────────
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 #  MAIN RENDER
-# ──────────────────────────────────────────────
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 def render_ask_ai_tab():
-    if not NVIDIA_AVAILABLE:
-        st.error("❌ Package `langchain-nvidia-ai-endpoints` belum terinstall.")
-        st.code("pip install langchain-nvidia-ai-endpoints", language="bash")
+    if not LLM_READY:
+        st.error("❌ Install dulu: `pip install langchain-nvidia-ai-endpoints`")
         return
 
-    _inject_chat_css()
+    st.markdown(_CSS, unsafe_allow_html=True)
 
-    # ── API Key (from .env or input) ──────────────────────────
+    # ── API key ───────────────────────────────────────────────
     api_key = os.environ.get("NVIDIA_API_KEY", "")
-
     if not api_key:
         st.markdown("""
-        <div class="welcome-card">
-            <h2>🤖 Ask AI</h2>
-            <p>Masukkan NVIDIA API Key untuk memulai</p>
+        <div class="ai-welcome">
+            <h3>🔑 API Key Required</h3>
+            <p>Set <code>NVIDIA_API_KEY</code> di file <code>.env</code></p>
         </div>
         """, unsafe_allow_html=True)
-
-        api_key_input = st.text_input(
-            "🔑 NVIDIA API Key",
-            type="password",
-            placeholder="nvapi-...",
-            help="Dapatkan di https://build.nvidia.com — atau set NVIDIA_API_KEY di file .env",
-            label_visibility="collapsed"
-        )
-        api_key = api_key_input.strip() if api_key_input else ""
-
-        if not api_key:
-            st.markdown("""
-            <div style="text-align:center; color:#64748b; font-size:0.85em; margin-top:12px;">
-                💡 Set <code>NVIDIA_API_KEY=nvapi-...</code> di file <code>.env</code> agar otomatis terbaca
-            </div>
-            """, unsafe_allow_html=True)
+        key_in = st.text_input("NVIDIA API Key", type="password",
+                               placeholder="nvapi-...", label_visibility="collapsed")
+        if key_in and key_in.strip():
+            api_key = key_in.strip()
+        else:
             return
 
-    # ── Init session state ────────────────────────────────────
+    # ── Session state ─────────────────────────────────────────
     if "ask_ai_history" not in st.session_state:
         st.session_state.ask_ai_history = []
 
-    # ── Check context files ──────────────────────────────────
-    ctx_files = {
-        "Housing.csv": os.path.exists("Housing.csv"),
-        "main.py": os.path.exists("main.py"),
-        "README.md": os.path.exists("README.md"),
-    }
-    pdfs = glob.glob("*.pdf")
-    n_charts = len(st.session_state.get("ask_ai_chart_labels", []))
+    history = st.session_state.ask_ai_history
 
-    # ── Welcome screen (no history) ──────────────────────────
-    if not st.session_state.ask_ai_history:
-        # Welcome card
-        ctx_count = sum(ctx_files.values()) + len(pdfs)
-        st.markdown(f"""
-        <div class="welcome-card">
-            <h2>🤖 Ask AI Assistant</h2>
-            <p>Tanya apapun tentang dataset, kode, model, atau paper.</p>
-            <p>AI membaca <strong>{ctx_count} file konteks</strong> secara otomatis.</p>
-            <div class="status-bar">
-                <span class="status-item">
-                    <span class="status-dot {'green' if ctx_files['Housing.csv'] else 'red'}"></span>
-                    Dataset
-                </span>
-                <span class="status-item">
-                    <span class="status-dot {'green' if ctx_files['main.py'] else 'red'}"></span>
-                    Source Code
-                </span>
-                <span class="status-item">
-                    <span class="status-dot {'green' if pdfs else 'yellow'}"></span>
-                    Paper PDF {'✓' if pdfs else '—'}
-                </span>
-                <span class="status-item">
-                    <span class="status-dot {'green' if n_charts > 0 else 'yellow'}"></span>
-                    Charts ({n_charts})
-                </span>
-            </div>
-        </div>
-        """, unsafe_allow_html=True)
+    # ── Header ────────────────────────────────────────────────
+    hdr_l, hdr_r = st.columns([8, 1])
+    with hdr_l:
+        count = len([m for m in history if m["role"] == "user"])
+        label = f"🤖 Ask AI · {count} pesan" if count else "🤖 Ask AI"
+        st.markdown(f"#### {label}")
+    with hdr_r:
+        if history and st.button("🗑️", help="Clear chat", use_container_width=True):
+            st.session_state.ask_ai_history = []
+            st.rerun()
 
-        # ── Suggestion buttons ────────────────────────────────
-        suggestions = [
-            ("📊", "Jelaskan hasil R² keempat model"),
-            ("🧮", "Bagaimana OLS diimplementasikan di kode?"),
-            ("📉", "Kenapa R² turun setelah outlier dihapus?"),
-            ("🌲", "Bandingkan XGBoost vs OLS"),
-            ("📄", "Apa kesimpulan paper Liming Yan 2024?"),
-            ("🔍", "Analisis korelasi price vs fitur lainnya"),
-        ]
+    # ── Scrollable chat container ─────────────────────────────
+    chat_box = st.container(height=520)
 
-        cols = st.columns(2)
-        for i, (icon, text) in enumerate(suggestions):
-            with cols[i % 2]:
-                st.markdown('<div class="suggestion-btn">', unsafe_allow_html=True)
-                if st.button(f"{icon}  {text}", key=f"sug_{i}", use_container_width=True):
-                    st.session_state["ask_ai_prefill"] = text
-                    st.rerun()
-                st.markdown('</div>', unsafe_allow_html=True)
+    # ── Prefill handling ──────────────────────────────────────
+    prefill = st.session_state.pop("_ai_prefill", None)
 
-    # ── Chat history display ──────────────────────────────────
-    for msg in st.session_state.ask_ai_history:
-        avatar = "👤" if msg["role"] == "user" else "🤖"
-        with st.chat_message(msg["role"], avatar=avatar):
-            st.markdown(msg["content"])
-
-    # ── Clear chat button (only if history exists) ────────────
-    if st.session_state.ask_ai_history:
-        col_spacer, col_clear = st.columns([5, 1])
-        with col_clear:
-            if st.button("🗑️ Clear", key="clear_chat", use_container_width=True):
-                st.session_state.ask_ai_history = []
-                st.rerun()
-
-    # ── Handle prefill from suggestion buttons ────────────────
-    prefill = st.session_state.pop("ask_ai_prefill", None)
-
-    # ── Chat input ────────────────────────────────────────────
+    # ── Chat input (Streamlit pins this to bottom) ────────────
     user_input = st.chat_input("Ketik pertanyaan tentang dataset, kode, atau paper...")
-
     if prefill and not user_input:
         user_input = prefill
 
-    if user_input:
-        # Add user message
-        st.session_state.ask_ai_history.append({
-            "role": "user",
-            "content": user_input
-        })
-        with st.chat_message("user", avatar="👤"):
-            st.markdown(user_input)
+    # ── Render messages inside scroll container ───────────────
+    with chat_box:
+        # Welcome screen (empty history)
+        if not history and not user_input:
+            has_csv = os.path.exists("Housing.csv")
+            has_code = os.path.exists("main.py")
+            pdfs = glob.glob("*.pdf")
+            charts = st.session_state.get("ai_charts", [])
 
-        # Call AI
-        with st.chat_message("assistant", avatar="🤖"):
-            with st.spinner("💭 Thinking..."):
+            st.markdown(f"""
+            <div class="ai-welcome">
+                <h3>Ask AI Assistant</h3>
+                <p>Tanya apapun — AI membaca dataset, code, dan paper otomatis</p>
+                <div class="ctx-pills">
+                    <span class="ctx-pill"><span class="dot {'dot-g' if has_csv else 'dot-y'}"></span> Dataset</span>
+                    <span class="ctx-pill"><span class="dot {'dot-g' if has_code else 'dot-y'}"></span> Code</span>
+                    <span class="ctx-pill"><span class="dot {'dot-g' if pdfs else 'dot-y'}"></span> Paper</span>
+                    <span class="ctx-pill"><span class="dot {'dot-g' if charts else 'dot-y'}"></span> Charts ({len(charts)})</span>
+                </div>
+            </div>
+            """, unsafe_allow_html=True)
+
+            # Suggestion chips
+            suggestions = [
+                "Jelaskan hasil R² keempat model",
+                "Bagaimana OLS diimplementasikan?",
+                "Kenapa R² turun tanpa outlier?",
+                "Bandingkan XGBoost vs OLS",
+                "Kesimpulan paper Liming Yan?",
+                "Korelasi price vs fitur lain",
+            ]
+            cols = st.columns(3)
+            for i, s in enumerate(suggestions):
+                with cols[i % 3]:
+                    if st.button(s, key=f"q{i}", use_container_width=True):
+                        st.session_state["_ai_prefill"] = s
+                        st.rerun()
+            return
+
+        # Display history
+        for msg in history:
+            av = "👤" if msg["role"] == "user" else "🤖"
+            with st.chat_message(msg["role"], avatar=av):
+                st.markdown(msg["content"])
+
+        # Handle new input
+        if user_input:
+            # Show user message
+            with st.chat_message("user", avatar="👤"):
+                st.markdown(user_input)
+
+            # AI response with streaming
+            with st.chat_message("assistant", avatar="🤖"):
                 try:
-                    system_prompt = _build_system_prompt()
+                    sys_prompt = _build_system_prompt()
+                    # Append chart info
+                    charts = st.session_state.get("ai_charts", [])
+                    if charts:
+                        sys_prompt += "\n\n---\n## [CHARTS]\n" + "\n".join(
+                            f"- {c}" for c in charts
+                        )
 
-                    # Add chart labels to system prompt if available
-                    chart_labels = st.session_state.get("ask_ai_chart_labels", [])
-                    if chart_labels:
-                        chart_info = "\n---\n## [CHARTS] Output Visual Aplikasi\nBerikut chart yang sudah di-generate:\n"
-                        for i, lbl in enumerate(chart_labels):
-                            chart_info += f"- Chart {i+1}: {lbl}\n"
-                        system_prompt += "\n\n" + chart_info
+                    client = _llm(api_key)
+                    chain = client | StrOutputParser()
+                    msgs = _to_langchain_messages(sys_prompt, history, user_input)
 
-                    response_text = _call_nvidia(
-                        api_key=api_key,
-                        user_question=user_input,
-                        history=st.session_state.ask_ai_history[:-1],
-                        system_prompt=system_prompt,
-                    )
-                    st.markdown(response_text)
-                    st.session_state.ask_ai_history.append({
-                        "role": "assistant",
-                        "content": response_text
-                    })
+                    # Stream response
+                    response_text = st.write_stream(chain.stream(msgs))
 
                 except Exception as e:
-                    err_msg = str(e)
-                    if "401" in err_msg or "auth" in err_msg.lower() or "invalid" in err_msg.lower():
-                        st.error("❌ **API Key tidak valid.** Cek NVIDIA API Key Anda.")
-                    elif "429" in err_msg or "rate" in err_msg.lower():
-                        st.error("⏳ **Rate limit.** Tunggu sebentar lalu coba lagi.")
+                    err = str(e)
+                    if "401" in err or "auth" in err.lower():
+                        response_text = None
+                        st.error("❌ API Key tidak valid")
+                    elif "429" in err or "rate" in err.lower():
+                        response_text = None
+                        st.error("⏳ Rate limit — tunggu sebentar")
                     else:
-                        st.error(f"❌ **Error:** {err_msg}")
-                    # Remove failed user message
-                    st.session_state.ask_ai_history.pop()
+                        response_text = None
+                        st.error(f"❌ {err}")
+
+            # Save to history
+            if user_input:
+                history.append({"role": "user", "content": user_input})
+            if response_text:
+                history.append({"role": "assistant", "content": response_text})
