@@ -112,6 +112,94 @@ def _build_system_prompt():
     return "\n\n".join(parts)
 
 
+def _build_metrics_context():
+    """Build metrics block from session_state — dinamis, tidak di-cache."""
+    m = st.session_state.get("ai_metrics")
+    if not m:
+        return ""
+
+    def _pct(v): return f"{v*100:.2f}%"
+    def _num(v): return f"{v:,.0f}"
+    def _f4(v):  return f"{v:.4f}"
+
+    lines = [
+        "---",
+        "## [METRICS] Hasil Evaluasi Model (Real-time dari Aplikasi)",
+        "",
+        "### Dataset",
+        f"| Info | Nilai |",
+        f"|---|---|",
+        f"| Total data asli | {m['n_total']} baris |",
+        f"| Data dengan outlier | {m['n_with_outliers']} baris |",
+        f"| Data tanpa outlier | {m['n_without_outliers']} baris |",
+        f"| Outlier dihapus | {m['n_outliers_removed']} baris |",
+        f"| Jumlah fitur | {m['n_features']} fitur |",
+        f"| Fitur | {', '.join(m['feature_cols'])} |",
+        f"| Price mean | {_num(m['price_mean'])} |",
+        f"| Price median | {_num(m['price_median'])} |",
+        f"| Price std | {_num(m['price_std'])} |",
+        f"| Price min | {_num(m['price_min'])} |",
+        f"| Price max | {_num(m['price_max'])} |",
+        f"| Area mean | {_num(m['area_mean'])} sq ft |",
+        f"| Area median | {_num(m['area_median'])} sq ft |",
+        "",
+        "### Evaluasi Keempat Model",
+        f"| Model | MSE | RMSE | R² | Adj R² |",
+        f"|---|---|---|---|---|",
+        f"| Univariate (area only) | {_num(m['uni_mse'])} | {_num(m['uni_rmse'])} | {_pct(m['uni_r2'])} | {_f4(m['uni_adj_r2'])} |",
+        f"| Multivariate + Outlier | {_num(m['multi_mse'])} | {_num(m['multi_rmse'])} | {_pct(m['multi_r2'])} | {_f4(m['multi_adj_r2'])} |",
+        f"| Multivariate - Outlier | {_num(m['no_mse'])} | {_num(m['no_rmse'])} | {_pct(m['no_r2'])} | {_f4(m['no_adj_r2'])} |",
+        f"| XGBoost | {_num(m['xgb_mse'])} | {_num(m['xgb_rmse'])} | {_pct(m['xgb_r2'])} | {_f4(m['xgb_adj_r2'])} |",
+        "",
+        "### Koefisien OLS — Univariate",
+        f"- β₀ (intercept): {m['uni_beta'][0]:,.2f}",
+        f"- β₁ (area):      {m['uni_beta'][1]:,.2f}",
+        "",
+        "### Koefisien OLS — Multivariate + Outlier",
+        "| Fitur | β (koefisien) | Importance (|β| norm) |",
+        "|---|---|---|",
+    ]
+    for feat in ["intercept"] + m["feature_cols"]:
+        beta_val = m["multi_beta"].get(feat, 0)
+        imp_val  = m["multi_importance"].get(feat, "-")
+        imp_str  = f"{imp_val:.4f}" if isinstance(imp_val, float) else "-"
+        lines.append(f"| {feat} | {beta_val:,.2f} | {imp_str} |")
+
+    lines += [
+        "",
+        "### Koefisien OLS — Multivariate - Outlier",
+        "| Fitur | β (koefisien) | Importance (|β| norm) |",
+        "|---|---|---|",
+    ]
+    for feat in ["intercept"] + m["feature_cols"]:
+        beta_val = m["no_beta"].get(feat, 0)
+        imp_val  = m["no_importance"].get(feat, "-")
+        imp_str  = f"{imp_val:.4f}" if isinstance(imp_val, float) else "-"
+        lines.append(f"| {feat} | {beta_val:,.2f} | {imp_str} |")
+
+    lines += [
+        "",
+        "### XGBoost Feature Importance",
+        "| Fitur | Importance Score |",
+        "|---|---|",
+    ]
+    xgb_imp_sorted = sorted(m["xgb_importance"].items(), key=lambda x: x[1], reverse=True)
+    for feat, val in xgb_imp_sorted:
+        lines.append(f"| {feat} | {val:.4f} |")
+
+    lines += [
+        "",
+        "### Korelasi Price vs Fitur (Pearson r)",
+        "| Fitur | r (korelasi dengan price) |",
+        "|---|---|",
+    ]
+    corr_sorted = sorted(m["correlations"].items(), key=lambda x: abs(x[1]), reverse=True)
+    for feat, val in corr_sorted:
+        lines.append(f"| {feat} | {val:.4f} |")
+
+    return "\n".join(lines)
+
+
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 #  LLM
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -339,10 +427,11 @@ def render_ask_ai_tab():
     with chat_box:
         # Welcome (empty state)
         if not history and not user_input:
-            has_csv = os.path.exists("Housing.csv")
-            has_code = os.path.exists("main.py")
-            pdfs = glob.glob("*.pdf")
-            charts = st.session_state.get("ai_charts", [])
+            has_csv   = os.path.exists("Housing.csv")
+            has_code  = os.path.exists("main.py")
+            pdfs      = glob.glob("*.pdf")
+            charts    = st.session_state.get("ai_charts", [])
+            has_metrics = "ai_metrics" in st.session_state
 
             st.markdown(f"""
             <div class="ai-hi">
@@ -353,10 +442,12 @@ def render_ask_ai_tab():
                     <span class="ctx-tag"><span class="d {'dg' if has_code else 'dy'}"></span>Code</span>
                     <span class="ctx-tag"><span class="d {'dg' if pdfs else 'dy'}"></span>Paper</span>
                     <span class="ctx-tag"><span class="d {'dg' if charts else 'dy'}"></span>Charts ({len(charts)})</span>
+                    <span class="ctx-tag"><span class="d {'dg' if has_metrics else 'dy'}"></span>Metrik & Evaluasi</span>
                 </div>
             </div>
             """, unsafe_allow_html=True)
             return
+
 
         # Display history
         for msg in history:
@@ -372,9 +463,16 @@ def render_ask_ai_tab():
             with st.chat_message("assistant", avatar="🤖"):
                 try:
                     sys_prompt = _build_system_prompt()
+
+                    # Inject live metrics (not cached)
+                    metrics_ctx = _build_metrics_context()
+                    if metrics_ctx:
+                        sys_prompt += "\n\n" + metrics_ctx
+
+                    # Inject chart labels
                     charts = st.session_state.get("ai_charts", [])
                     if charts:
-                        sys_prompt += "\n\n---\n## [CHARTS]\n" + "\n".join(f"- {c}" for c in charts)
+                        sys_prompt += "\n\n---\n## [CHARTS] Output Grafik Aplikasi\n" + "\n".join(f"- {c}" for c in charts)
 
                     chain = _llm(api_key) | StrOutputParser()
                     msgs = _to_lc(sys_prompt, history, user_input)

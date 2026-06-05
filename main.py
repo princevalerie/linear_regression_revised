@@ -344,6 +344,59 @@ mse_xgb   = mse(y_xgb, y_pred_xgb)
 r2_xgb    = r_squared(y_xgb, y_pred_xgb)
 adj_r2_xgb = adj_r_squared(y_xgb, y_pred_xgb, len(feat_cols_xgb))
 
+# ── STORE ALL METRICS FOR AI CONTEXT ───────────────────────────
+_beta_abs = np.abs(beta_multi[1:])
+_beta_imp = (_beta_abs / _beta_abs.sum()).tolist() if _beta_abs.sum() > 0 else [0]*len(feat_cols)
+
+_beta_abs_no = np.abs(beta_no[1:])
+_beta_imp_no = (_beta_abs_no / _beta_abs_no.sum()).tolist() if _beta_abs_no.sum() > 0 else [0]*len(feat_cols_no)
+
+st.session_state["ai_metrics"] = {
+    # Dataset info
+    "n_total": 545,
+    "n_with_outliers": len(df_with),
+    "n_without_outliers": len(df_no),
+    "n_outliers_removed": len(df_with) - len(df_no),
+    "n_features": len(FEATURE_COLS),
+    "feature_cols": FEATURE_COLS,
+    "price_mean": float(df_with["price"].mean()),
+    "price_median": float(df_with["price"].median()),
+    "price_std": float(df_with["price"].std()),
+    "price_min": float(df_with["price"].min()),
+    "price_max": float(df_with["price"].max()),
+    "area_mean": float(df_with["area"].mean()),
+    "area_median": float(df_with["area"].median()),
+    # Univariate
+    "uni_mse": float(mse_uni),
+    "uni_r2": float(r2_uni),
+    "uni_adj_r2": float(adj_r2_uni),
+    "uni_rmse": float(np.sqrt(mse_uni)),
+    "uni_beta": [float(b) for b in beta_uni],
+    # Multivariate + Outlier
+    "multi_mse": float(mse_multi),
+    "multi_r2": float(r2_multi),
+    "multi_adj_r2": float(adj_r2_multi),
+    "multi_rmse": float(np.sqrt(mse_multi)),
+    "multi_beta": {k: float(v) for k, v in zip(["intercept"] + feat_cols, beta_multi)},
+    "multi_importance": {k: round(v, 4) for k, v in zip(feat_cols, _beta_imp)},
+    # Multivariate - Outlier
+    "no_mse": float(mse_no),
+    "no_r2": float(r2_no),
+    "no_adj_r2": float(adj_r2_no),
+    "no_rmse": float(np.sqrt(mse_no)),
+    "no_beta": {k: float(v) for k, v in zip(["intercept"] + feat_cols_no, beta_no)},
+    "no_importance": {k: round(v, 4) for k, v in zip(feat_cols_no, _beta_imp_no)},
+    # XGBoost
+    "xgb_mse": float(mse_xgb),
+    "xgb_r2": float(r2_xgb),
+    "xgb_adj_r2": float(adj_r2_xgb),
+    "xgb_rmse": float(np.sqrt(mse_xgb)),
+    "xgb_importance": {k: round(float(v), 4) for k, v in zip(feat_cols_xgb, model_xgb.feature_importances_)},
+    # Correlation (price vs features)
+    "correlations": {col: round(float(df_with[["price", col]].corr().iloc[0, 1]), 4)
+                     for col in FEATURE_COLS if col in df_with.columns},
+}
+
 # ── 8 TABS ─────────────────────────────────────────────────────
 tabs = st.tabs([
     "📊 Dataset",
