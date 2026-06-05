@@ -212,6 +212,7 @@ def _llm(api_key):
         temperature=1,
         top_p=1,
         max_tokens=16384,
+        streaming=True,   # ← token-by-token streaming
     )
 
 def _to_lc(system_prompt, history, user_input):
