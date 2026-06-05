@@ -1,13 +1,11 @@
 """
 ask_ai_tab.py — ChatNVIDIA RAG Chatbot (LangChain)
 Model: moonshotai/kimi-k2.6 via NVIDIA AI Endpoints
-Lightweight RAG: semua konteks di-inject ke system prompt
 """
 
 import os, glob, textwrap
 import streamlit as st
 
-# ── LangChain ──────────────────────────────────────────────────
 try:
     from langchain_nvidia_ai_endpoints import ChatNVIDIA
     from langchain_core.messages import SystemMessage, HumanMessage, AIMessage
@@ -16,14 +14,12 @@ try:
 except ImportError:
     LLM_READY = False
 
-# ── PDF ────────────────────────────────────────────────────────
 try:
     from PyPDF2 import PdfReader
     PDF_OK = True
 except ImportError:
     PDF_OK = False
 
-# ── dotenv ─────────────────────────────────────────────────────
 try:
     from dotenv import load_dotenv
     load_dotenv()
@@ -31,9 +27,9 @@ except ImportError:
     pass
 
 
-# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 #  HELPERS
-# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 def _read(path):
     try:
@@ -41,7 +37,6 @@ def _read(path):
             return f.read()
     except Exception:
         return None
-
 
 def _pdf_text(path, max_pages=30):
     if not PDF_OK:
@@ -57,7 +52,6 @@ def _pdf_text(path, max_pages=30):
     except Exception:
         return None
 
-
 def capture_chart(fig, label=""):
     """Dipanggil dari main.py — simpan label chart untuk konteks AI."""
     if "ai_charts" not in st.session_state:
@@ -67,15 +61,15 @@ def capture_chart(fig, label=""):
     st.session_state.ai_charts.append(label or f"Chart {len(st.session_state.ai_charts)+1}")
 
 
-# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-#  RAG SYSTEM PROMPT (cached, lightweight)
-# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+#  RAG SYSTEM PROMPT (cached)
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 @st.cache_data(ttl=300)
 def _build_system_prompt():
     parts = [textwrap.dedent("""\
     Kamu adalah AI assistant expert untuk proyek "House Price Prediction — Linear Regression from Scratch".
-    Kamu memiliki akses PENUH ke dataset, source code, dokumentasi, dan paper yang diberikan di bawah.
+    Kamu memiliki akses PENUH ke dataset, source code, dokumentasi, dan paper.
 
     KEMAMPUAN:
     • Analisis dataset Housing.csv (545 baris, 13 kolom harga rumah)
@@ -87,28 +81,23 @@ def _build_system_prompt():
     ATURAN:
     • Jawab dalam Bahasa Indonesia kecuali diminta Bahasa Inggris
     • Gunakan markdown · LaTeX dalam $...$ jika relevan
-    • Ringkas, informatif, akurat
-    • Jangan mengarang — jika tidak tahu, bilang tidak tahu""")]
+    • Ringkas, informatif, akurat""")]
 
-    # Dataset
     csv = _read("Housing.csv")
     if csv:
         lines = csv.strip().split("\n")
         parts.append(f"---\n## [DATA] Housing.csv ({len(lines)-1} rows)\n```csv\n{chr(10).join(lines[:31])}\n```")
 
-    # Source code
     for fname in ["main.py", "ask_ai_tab.py"]:
         code = _read(fname)
         if code:
             s = code[:15000] + ("\n…[truncated]" if len(code) > 15000 else "")
             parts.append(f"---\n## [CODE] {fname}\n```python\n{s}\n```")
 
-    # README
     readme = _read("README.md")
     if readme:
         parts.append(f"---\n## [DOC] README.md\n{readme}")
 
-    # PDFs
     seen = set()
     for p in (glob.glob("*.pdf") + glob.glob("**/*.pdf", recursive=False))[:2]:
         ap = os.path.abspath(p)
@@ -123,9 +112,9 @@ def _build_system_prompt():
     return "\n\n".join(parts)
 
 
-# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-#  LLM (cached)
-# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+#  LLM
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 @st.cache_resource
 def _llm(api_key):
@@ -137,181 +126,218 @@ def _llm(api_key):
         max_tokens=16384,
     )
 
-
-def _to_langchain_messages(system_prompt, history, user_input):
-    """Convert chat history → LangChain message objects."""
+def _to_lc(system_prompt, history, user_input):
     msgs = [SystemMessage(content=system_prompt)]
     for m in history:
-        if m["role"] == "user":
-            msgs.append(HumanMessage(content=m["content"]))
-        else:
-            msgs.append(AIMessage(content=m["content"]))
+        cls = HumanMessage if m["role"] == "user" else AIMessage
+        msgs.append(cls(content=m["content"]))
     msgs.append(HumanMessage(content=user_input))
     return msgs
 
 
-# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+#  QUICK QUESTIONS
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+QUICK_QS = [
+    "Jelaskan hasil R² keempat model",
+    "Bagaimana OLS diimplementasikan?",
+    "Kenapa R² turun tanpa outlier?",
+    "Bandingkan XGBoost vs OLS",
+    "Apa kesimpulan paper?",
+    "Korelasi price vs area",
+    "Jelaskan preprocessing data",
+    "Feature importance mana tertinggi?",
+]
+
+
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 #  CSS
-# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 _CSS = """
 <style>
-/* ── Chat container scroll area ─────────────── */
-div[data-testid="stVerticalBlockBorderWrapper"]:has(> div > div > div > div[data-testid="stChatMessage"]) {
-    background: rgba(8, 10, 18, 0.4);
-    border: 1px solid rgba(55, 65, 81, 0.3);
-    border-radius: 16px;
+/* ── Scrollable chat area ───────────────────── */
+div[data-testid="stVerticalBlockBorderWrapper"]:has(
+    > div > div > div > div[data-testid="stChatMessage"]
+) {
+    background: rgba(8, 10, 18, 0.35);
+    border: 1px solid rgba(55, 65, 81, 0.25);
+    border-radius: 14px;
 }
 
-/* ── Message bubbles ────────────────────────── */
+/* ── Message rows ───────────────────────────── */
 [data-testid="stChatMessage"] {
     padding: 10px 16px !important;
-    margin: 2px 0 !important;
+    margin: 0 !important;
     border-radius: 0 !important;
     background: transparent !important;
-    border-bottom: 1px solid rgba(55, 65, 81, 0.15) !important;
+    border-bottom: 1px solid rgba(55, 65, 81, 0.12) !important;
 }
 [data-testid="stChatMessage"]:last-child {
     border-bottom: none !important;
 }
 
-/* ── Chat input ─────────────────────────────── */
+/* ── Chat input bar — sticky bottom look ────── */
+[data-testid="stChatInput"] {
+    border-top: 1px solid rgba(55, 65, 81, 0.2);
+    padding-top: 6px;
+}
 [data-testid="stChatInput"] textarea {
-    border-radius: 24px !important;
-    font-size: 0.92em !important;
+    border-radius: 22px !important;
+    font-size: 0.9em !important;
 }
 
-/* ── Welcome card ───────────────────────────── */
-.ai-welcome {
+/* ── Welcome ────────────────────────────────── */
+.ai-hi {
     text-align: center;
-    padding: 40px 20px 24px;
+    padding: 48px 20px 20px;
+    opacity: 0.85;
 }
-.ai-welcome h3 {
-    font-size: 1.35em;
-    margin-bottom: 4px;
+.ai-hi h3 {
+    margin: 0 0 6px;
+    font-size: 1.3em;
     background: linear-gradient(135deg, #a78bfa, #60a5fa);
     -webkit-background-clip: text;
     -webkit-text-fill-color: transparent;
 }
-.ai-welcome p {
+.ai-hi p {
     color: #64748b;
-    font-size: 0.88em;
+    font-size: 0.85em;
     margin: 2px 0;
 }
-.ctx-pills {
+.ctx-row {
+    display: flex; justify-content: center;
+    gap: 8px; margin-top: 12px; flex-wrap: wrap;
+}
+.ctx-tag {
+    font-size: 0.7em; padding: 2px 9px;
+    border-radius: 9px; color: #94a3b8;
+    background: rgba(100,116,139,0.08);
+    display: inline-flex; align-items: center; gap: 4px;
+}
+.ctx-tag .d { width:5px; height:5px; border-radius:50%; display:inline-block; }
+.dg { background:#34d399; }
+.dy { background:#fbbf24; }
+
+/* ── Quick-question chips ───────────────────── */
+.qq-wrap {
     display: flex;
-    justify-content: center;
-    gap: 8px;
-    margin-top: 14px;
     flex-wrap: wrap;
+    gap: 6px;
+    padding: 6px 4px 2px;
+    justify-content: center;
 }
-.ctx-pill {
-    font-size: 0.73em;
-    padding: 3px 10px;
-    border-radius: 10px;
-    background: rgba(100,116,139,0.1);
-    color: #94a3b8;
-    display: inline-flex;
-    align-items: center;
-    gap: 4px;
+.qq-chip {
+    font-size: 0.7em;
+    padding: 4px 12px;
+    border-radius: 14px;
+    border: 1px solid rgba(139,92,246,0.18);
+    background: rgba(139,92,246,0.05);
+    color: #a5b4c8;
+    cursor: pointer;
+    transition: all 0.15s ease;
+    text-decoration: none;
+    white-space: nowrap;
 }
-.ctx-pill .dot {
-    width: 5px; height: 5px;
-    border-radius: 50%;
-    display: inline-block;
-}
-.dot-g { background: #34d399; }
-.dot-y { background: #fbbf24; }
-
-/* ── Suggestion chips ───────────────────────── */
-div[data-testid="stHorizontalBlock"] .stButton > button {
-    border-radius: 18px !important;
-    font-size: 0.8em !important;
-    padding: 5px 14px !important;
-    border: 1px solid rgba(139,92,246,0.2) !important;
-    background: rgba(139,92,246,0.04) !important;
-    transition: all 0.15s ease !important;
-    white-space: nowrap !important;
-}
-div[data-testid="stHorizontalBlock"] .stButton > button:hover {
-    background: rgba(139,92,246,0.12) !important;
-    border-color: rgba(139,92,246,0.4) !important;
-}
-
-/* ── Header row ─────────────────────────────── */
-.chat-hdr {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    margin-bottom: 4px;
-}
-.chat-hdr h3 {
-    margin: 0;
-    font-size: 1.1em;
-    color: #e2e8f0;
+.qq-chip:hover {
+    background: rgba(139,92,246,0.14);
+    border-color: rgba(139,92,246,0.35);
+    color: #c4b5fd;
 }
 </style>
 """
 
 
-# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-#  MAIN RENDER
-# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+#  RENDER
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 def render_ask_ai_tab():
     if not LLM_READY:
-        st.error("❌ Install dulu: `pip install langchain-nvidia-ai-endpoints`")
+        st.error("❌ `pip install langchain-nvidia-ai-endpoints`")
         return
 
     st.markdown(_CSS, unsafe_allow_html=True)
 
-    # ── API key ───────────────────────────────────────────────
+    # ── API key ───────────────────────────────
     api_key = os.environ.get("NVIDIA_API_KEY", "")
     if not api_key:
-        st.markdown("""
-        <div class="ai-welcome">
-            <h3>🔑 API Key Required</h3>
-            <p>Set <code>NVIDIA_API_KEY</code> di file <code>.env</code></p>
-        </div>
-        """, unsafe_allow_html=True)
-        key_in = st.text_input("NVIDIA API Key", type="password",
-                               placeholder="nvapi-...", label_visibility="collapsed")
-        if key_in and key_in.strip():
-            api_key = key_in.strip()
-        else:
+        st.markdown('<div class="ai-hi"><h3>🔑 API Key</h3>'
+                     '<p>Set <code>NVIDIA_API_KEY</code> di <code>.env</code></p></div>',
+                     unsafe_allow_html=True)
+        k = st.text_input("Key", type="password", placeholder="nvapi-...",
+                          label_visibility="collapsed")
+        api_key = k.strip() if k else ""
+        if not api_key:
             return
 
-    # ── Session state ─────────────────────────────────────────
+    # ── State ─────────────────────────────────
     if "ask_ai_history" not in st.session_state:
         st.session_state.ask_ai_history = []
-
     history = st.session_state.ask_ai_history
 
-    # ── Header ────────────────────────────────────────────────
-    hdr_l, hdr_r = st.columns([8, 1])
-    with hdr_l:
-        count = len([m for m in history if m["role"] == "user"])
-        label = f"🤖 Ask AI · {count} pesan" if count else "🤖 Ask AI"
-        st.markdown(f"#### {label}")
-    with hdr_r:
-        if history and st.button("🗑️", help="Clear chat", use_container_width=True):
+    # ── Header ────────────────────────────────
+    h1, h2 = st.columns([9, 1])
+    with h1:
+        n = sum(1 for m in history if m["role"] == "user")
+        st.markdown(f"#### 🤖 Ask AI{'  ·  ' + str(n) + ' pesan' if n else ''}")
+    with h2:
+        if history and st.button("🗑️", help="Clear", use_container_width=True):
             st.session_state.ask_ai_history = []
             st.rerun()
 
-    # ── Scrollable chat container ─────────────────────────────
-    chat_box = st.container(height=520)
+    # ── Chat container (fixed height → input stays at bottom) ──
+    chat_box = st.container(height=420)
 
-    # ── Prefill handling ──────────────────────────────────────
+    # ── Quick question chips (always visible, between chat & input) ──
     prefill = st.session_state.pop("_ai_prefill", None)
 
-    # ── Chat input (Streamlit pins this to bottom) ────────────
-    user_input = st.chat_input("Ketik pertanyaan tentang dataset, kode, atau paper...")
+    # Render quick question row as clickable streamlit buttons
+    qcols = st.columns(4)
+    for i, q in enumerate(QUICK_QS[:4]):
+        with qcols[i]:
+            if st.button(q, key=f"qq_{i}", use_container_width=True):
+                prefill = q
+
+    # Second row of quick questions
+    qcols2 = st.columns(4)
+    for i, q in enumerate(QUICK_QS[4:8]):
+        with qcols2[i]:
+            if st.button(q, key=f"qq2_{i}", use_container_width=True):
+                prefill = q
+
+    # Small font override for the quick-q buttons
+    st.markdown("""
+    <style>
+    /* Target only the quick-question button rows */
+    div[data-testid="stHorizontalBlock"]:has(button[data-testid="stBaseButton-secondary"]) button {
+        font-size: 0.68em !important;
+        padding: 3px 6px !important;
+        border-radius: 14px !important;
+        border: 1px solid rgba(139,92,246,0.15) !important;
+        background: rgba(139,92,246,0.04) !important;
+        color: #94a3b8 !important;
+        min-height: 0 !important;
+        height: auto !important;
+        line-height: 1.3 !important;
+    }
+    div[data-testid="stHorizontalBlock"]:has(button[data-testid="stBaseButton-secondary"]) button:hover {
+        background: rgba(139,92,246,0.12) !important;
+        border-color: rgba(139,92,246,0.35) !important;
+        color: #c4b5fd !important;
+    }
+    </style>
+    """, unsafe_allow_html=True)
+
+    # ── Chat input (pinned at bottom since page doesn't scroll) ──
+    user_input = st.chat_input("Ketik pertanyaan...")
     if prefill and not user_input:
         user_input = prefill
 
-    # ── Render messages inside scroll container ───────────────
+    # ── Render inside chat container ──────────
     with chat_box:
-        # Welcome screen (empty history)
+        # Welcome (empty state)
         if not history and not user_input:
             has_csv = os.path.exists("Housing.csv")
             has_code = os.path.exists("main.py")
@@ -319,33 +345,17 @@ def render_ask_ai_tab():
             charts = st.session_state.get("ai_charts", [])
 
             st.markdown(f"""
-            <div class="ai-welcome">
+            <div class="ai-hi">
                 <h3>Ask AI Assistant</h3>
-                <p>Tanya apapun — AI membaca dataset, code, dan paper otomatis</p>
-                <div class="ctx-pills">
-                    <span class="ctx-pill"><span class="dot {'dot-g' if has_csv else 'dot-y'}"></span> Dataset</span>
-                    <span class="ctx-pill"><span class="dot {'dot-g' if has_code else 'dot-y'}"></span> Code</span>
-                    <span class="ctx-pill"><span class="dot {'dot-g' if pdfs else 'dot-y'}"></span> Paper</span>
-                    <span class="ctx-pill"><span class="dot {'dot-g' if charts else 'dot-y'}"></span> Charts ({len(charts)})</span>
+                <p>Tanya apapun — AI membaca semua konteks otomatis</p>
+                <div class="ctx-row">
+                    <span class="ctx-tag"><span class="d {'dg' if has_csv else 'dy'}"></span>Dataset</span>
+                    <span class="ctx-tag"><span class="d {'dg' if has_code else 'dy'}"></span>Code</span>
+                    <span class="ctx-tag"><span class="d {'dg' if pdfs else 'dy'}"></span>Paper</span>
+                    <span class="ctx-tag"><span class="d {'dg' if charts else 'dy'}"></span>Charts ({len(charts)})</span>
                 </div>
             </div>
             """, unsafe_allow_html=True)
-
-            # Suggestion chips
-            suggestions = [
-                "Jelaskan hasil R² keempat model",
-                "Bagaimana OLS diimplementasikan?",
-                "Kenapa R² turun tanpa outlier?",
-                "Bandingkan XGBoost vs OLS",
-                "Kesimpulan paper Liming Yan?",
-                "Korelasi price vs fitur lain",
-            ]
-            cols = st.columns(3)
-            for i, s in enumerate(suggestions):
-                with cols[i % 3]:
-                    if st.button(s, key=f"q{i}", use_container_width=True):
-                        st.session_state["_ai_prefill"] = s
-                        st.rerun()
             return
 
         # Display history
@@ -354,43 +364,32 @@ def render_ask_ai_tab():
             with st.chat_message(msg["role"], avatar=av):
                 st.markdown(msg["content"])
 
-        # Handle new input
+        # New message
         if user_input:
-            # Show user message
             with st.chat_message("user", avatar="👤"):
                 st.markdown(user_input)
 
-            # AI response with streaming
             with st.chat_message("assistant", avatar="🤖"):
                 try:
                     sys_prompt = _build_system_prompt()
-                    # Append chart info
                     charts = st.session_state.get("ai_charts", [])
                     if charts:
-                        sys_prompt += "\n\n---\n## [CHARTS]\n" + "\n".join(
-                            f"- {c}" for c in charts
-                        )
+                        sys_prompt += "\n\n---\n## [CHARTS]\n" + "\n".join(f"- {c}" for c in charts)
 
-                    client = _llm(api_key)
-                    chain = client | StrOutputParser()
-                    msgs = _to_langchain_messages(sys_prompt, history, user_input)
-
-                    # Stream response
+                    chain = _llm(api_key) | StrOutputParser()
+                    msgs = _to_lc(sys_prompt, history, user_input)
                     response_text = st.write_stream(chain.stream(msgs))
 
                 except Exception as e:
                     err = str(e)
+                    response_text = None
                     if "401" in err or "auth" in err.lower():
-                        response_text = None
                         st.error("❌ API Key tidak valid")
                     elif "429" in err or "rate" in err.lower():
-                        response_text = None
-                        st.error("⏳ Rate limit — tunggu sebentar")
+                        st.error("⏳ Rate limit — coba lagi")
                     else:
-                        response_text = None
                         st.error(f"❌ {err}")
 
-            # Save to history
             if user_input:
                 history.append({"role": "user", "content": user_input})
             if response_text:
