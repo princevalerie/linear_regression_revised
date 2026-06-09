@@ -13,8 +13,37 @@ Aplikasi Streamlit untuk memprediksi harga rumah menggunakan **Ordinary Least Sq
 |-----|-----------|
 | 📊 Dataset Overview | Pratinjau data, distribusi harga, correlation matrix |
 | 📈 Univariate Regression | Model dengan satu fitur (area), metrik + grafik + interpretasi |
-| 📉 Multivariate Regression | Model dengan semua fitur, feature importance, perbandingan model |
-| 🔮 Prediksi Manual | Input spesifikasi rumah → estimasi harga real-time |
+| 📉 Multivariate + Outlier | Model semua fitur dengan outlier |
+| 📉 Multivariate − Outlier | Model semua fitur tanpa outlier |
+| 🌲 XGBoost | Bonus: model non-linear untuk perbandingan |
+| ⚖️ Comparison | Perbandingan keempat model |
+| 🔮 Prediksi Manual | Input spesifikasi rumah → estimasi harga |
+| 🤖 Ask AI | Chatbot AI — tanya tentang dataset, kode, paper |
+
+---
+
+## 🤖 Ask AI — NVIDIA AI Chatbot
+
+Tab Ask AI menggunakan **ChatNVIDIA** via LangChain untuk menjawab pertanyaan tentang proyek ini.
+
+**Model:** `moonshotai/kimi-k2.6` via NVIDIA AI Endpoints
+
+**Konteks RAG otomatis:**
+- `Housing.csv` — dataset lengkap
+- `main.py` — source code aplikasi
+- `ask_ai_tab.py` — source code tab AI
+- `README.md` — dokumentasi
+- `*.pdf` — paper (teks diekstrak via PyPDF2)
+- Output chart labels dari aplikasi
+
+### Setup API Key
+
+```bash
+# Buat file .env di root folder:
+NVIDIA_API_KEY=nvapi-...
+```
+
+Dapatkan API key di [build.nvidia.com](https://build.nvidia.com)
 
 ---
 
@@ -35,9 +64,12 @@ Semua fungsi diimplementasikan manual menggunakan **NumPy** saja:
 ## 🗂️ Struktur File
 
 ```
-├── app.py              # Aplikasi Streamlit utama
+├── main.py             # Aplikasi Streamlit utama (8 tab)
+├── ask_ai_tab.py       # Tab Ask AI — ChatNVIDIA RAG chatbot
 ├── requirements.txt    # Dependensi Python
 ├── Housing.csv         # Dataset (Kaggle Housing Prices Dataset)
+├── *.pdf               # Paper referensi
+├── .env                # API key (NVIDIA_API_KEY=nvapi-...)
 └── README.md           # Dokumentasi ini
 ```
 
@@ -49,24 +81,28 @@ Semua fungsi diimplementasikan manual menggunakan **NumPy** saja:
 # 1. Install dependensi
 pip install -r requirements.txt
 
-# 2. Jalankan aplikasi
-streamlit run app.py
-```
+# 2. Setup API key (untuk fitur Ask AI)
+echo "NVIDIA_API_KEY=nvapi-..." > .env
 
-Pastikan file `Housing.csv` berada di direktori yang sama dengan `app.py`.
+# 3. Jalankan aplikasi
+streamlit run main.py
+```
 
 ---
 
 ## 📦 Dependensi
 
-| Library | Versi | Kegunaan |
-|---------|-------|----------|
-| streamlit | 1.35.0 | Framework UI web |
-| numpy | 1.26.4 | Komputasi matriks OLS |
-| pandas | 2.2.2 | Manipulasi dataset |
-| matplotlib | 3.9.0 | Visualisasi grafik |
-
-> ⚠️ **Tidak menggunakan** scikit-learn, scipy, atau library ML lainnya.
+| Library | Kegunaan |
+|---------|----------|
+| streamlit | Framework UI web |
+| numpy | Komputasi matriks OLS |
+| pandas | Manipulasi dataset |
+| matplotlib | Visualisasi grafik |
+| seaborn | Visualisasi tambahan |
+| xgboost | Model XGBoost |
+| langchain-nvidia-ai-endpoints | ChatNVIDIA LLM |
+| PyPDF2 | Ekstraksi teks dari PDF |
+| python-dotenv | Baca file .env |
 
 ---
 
@@ -86,9 +122,11 @@ Min-Max Normalization
     │
     ├─── Univariate OLS (area only) ──→ Evaluate (MSE, R², Adj R²)
     │
-    └─── Multivariate OLS (all features) ──→ Evaluate + Feature Importance
-                                                │
-                                                └─── Manual Prediction Input
+    ├─── Multivariate OLS (all features) ──→ Evaluate + Feature Importance
+    │
+    └─── XGBoost ──→ Evaluate + Feature Importance
+                        │
+                        └─── Manual Prediction Input
 ```
 
 ---
