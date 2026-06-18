@@ -484,20 +484,41 @@ with tabs[1]:
     c1.metric("MSE", f"{mse_uni:,.0f}")
     c2.metric("R²", f"{r2_uni*100:.2f}%")
     st.markdown(interpret_r2(r2_uni))
-    col_l, col_r = st.columns([1, 2])
+    st.divider()
+    col_l, col_r = st.columns(2)
     with col_l:
-        st.markdown("**Koefisien Model**")
-        st.table(pd.DataFrame({
+        st.markdown("##### 📋 Koefisien Model")
+        st.dataframe(pd.DataFrame({
             "Parameter": ["Intercept (β₀)", "Area (β₁)"],
             "Nilai": [f"{beta_uni[0]:,.2f}", f"{beta_uni[1]:,.2f}"]
-        }))
+        }), use_container_width=True)
     with col_r:
-        fig_uni = plot_actual_vs_predicted(y_uni, y_pred_uni,
-                                           f"Univariate · Actual vs Predicted (R² = {r2_uni*100:.2f}%)", C_BLUE)
-        _show(fig_uni, "Univariate · Actual vs Predicted")
+        st.markdown("##### 📊 Area vs Price")
+        fig_scatter, ax = plt.subplots(figsize=(9, 4.5))
+        sorted_idx = np.argsort(df_with["area"].values)
+        area_sorted = df_with["area"].values[sorted_idx]
+        pred_sorted = y_pred_uni[sorted_idx] / 1e6
+        ax.scatter(df_with["area"], df_with["price"] / 1e6, alpha=0.4, color=C_CYAN, s=15, edgecolors='none')
+        ax.plot(area_sorted, pred_sorted, color=C_ORANGE, linewidth=2, linestyle='--', label='Regression Line')
+        ax.set_xlabel("Area")
+        ax.set_ylabel("Price (Millions)")
+        ax.set_title("Regression Line", fontsize=13, fontweight="bold", color=C_BLUE)
+        ax.grid(True, alpha=0.2)
+        ax.legend()
+        for spine in ax.spines.values():
+            spine.set_visible(False)
+        plt.tight_layout()
+        _show(fig_scatter, "Univariate · Scatter Plot")
+    st.divider()
+    st.markdown("##### 📈 Actual vs Predicted")
+    fig_uni = plot_actual_vs_predicted(y_uni, y_pred_uni,
+                                       f"Univariate · Actual vs Predicted (R² = {r2_uni*100:.2f}%)", C_BLUE)
+    _show(fig_uni, "Univariate · Actual vs Predicted")
+    st.divider()
     st.markdown("##### 📊 Analisis Residual")
     fig_res_uni = plot_residuals(y_uni, y_pred_uni, "Residual Analysis — Univariate")
     _show(fig_res_uni, "Univariate · Residual Analysis")
+    st.divider()
     st.markdown("##### ℹ️ Interpretasi (Section 3)")
     st.markdown(f"""
     - R² = **{r2_uni*100:.2f}%** — Paper: **~34.58%**
@@ -514,9 +535,10 @@ with tabs[2]:
     c1.metric("MSE", f"{mse_multi:,.0f}")
     c2.metric("R²", f"{r2_multi*100:.2f}%", delta=f"+{(r2_multi - r2_uni)*100:.2f}% vs Uni")
     st.markdown(interpret_r2(r2_multi))
+    st.divider()
     col_l, col_r = st.columns(2)
     with col_l:
-        st.markdown("**Koefisien Model**")
+        st.markdown("##### 📋 Koefisien Model")
         st.dataframe(pd.DataFrame({
             "Fitur": ["Intercept"] + feat_cols,
             "β": [f"{b:,.2f}" for b in beta_multi],
@@ -526,13 +548,16 @@ with tabs[2]:
         imp_norm = beta_abs / beta_abs.sum()
         fig_imp = plot_feature_importance(imp_norm, feat_cols, "Feature Importance (|β| normalized)", "Blues")
         _show(fig_imp, "Multi+Outlier · Feature Importance")
-    st.subheader("Actual vs Predicted")
+    st.divider()
+    st.markdown("##### 📈 Actual vs Predicted")
     fig_m = plot_actual_vs_predicted(y_multi, y_pred_multi,
                                      f"Multivariate + Outliers · R² = {r2_multi*100:.2f}%", C_GREEN)
     _show(fig_m, "Multi+Outlier · Actual vs Predicted")
+    st.divider()
     st.markdown("##### 📊 Analisis Residual")
     fig_rm = plot_residuals(y_multi, y_pred_multi, "Residual — Multivariate + Outliers")
     _show(fig_rm, "Multi+Outlier · Residual")
+    st.divider()
     st.markdown("##### ℹ️ Interpretasi (Section 3)")
     st.markdown(f"""
     - R² = **{r2_multi*100:.2f}%** — Paper: **~61.97%**
@@ -553,22 +578,31 @@ with tabs[3]:
     ⚠️ **Outlier Paradox:** R² turun dari **{r2_multi*100:.2f}%** → **{r2_no*100:.2f}%** setelah outlier dihapus.  
     Paper: *"predictions are much better on the graph, but scores drop from 61.97% to 54.97%"*
     """)
-    fig_no = plot_actual_vs_predicted(y_no, y_pred_no,
-                                      f"Multivariate − Outliers · R² = {r2_no*100:.2f}%", C_ORANGE)
-    _show(fig_no, "Multi−Outlier · Actual vs Predicted")
+    st.divider()
     col_l, col_r = st.columns(2)
     with col_l:
-        st.markdown("##### 📊 Analisis Residual")
-        fig_rn = plot_residuals(y_no, y_pred_no, "Residual — Multivariate − Outliers")
-        _show(fig_rn, "Multi−Outlier · Residual")
-    with col_r:
         st.markdown("##### 📋 Koefisien Model")
         st.dataframe(pd.DataFrame({
             "Fitur": ["Intercept"] + feat_cols_no,
             "β": [f"{b:,.2f}" for b in beta_no],
-        }), use_container_width=True)
+        }), use_container_width=True, height=300)
+    with col_r:
+        beta_abs_no = np.abs(beta_no[1:])
+        imp_norm_no = beta_abs_no / beta_abs_no.sum()
+        fig_imp_no = plot_feature_importance(imp_norm_no, feat_cols_no, "Feature Importance (|β| normalized)", "Oranges")
+        _show(fig_imp_no, "Multi−Outlier · Feature Importance")
+    st.divider()
+    st.markdown("##### 📈 Actual vs Predicted")
+    fig_no = plot_actual_vs_predicted(y_no, y_pred_no,
+                                      f"Multivariate − Outliers · R² = {r2_no*100:.2f}%", C_ORANGE)
+    _show(fig_no, "Multi−Outlier · Actual vs Predicted")
+    st.divider()
+    st.markdown("##### 📊 Analisis Residual")
+    fig_rn = plot_residuals(y_no, y_pred_no, "Residual — Multivariate − Outliers")
+    _show(fig_rn, "Multi−Outlier · Residual")
+    st.divider()
+    st.markdown("##### ℹ️ Interpretasi (Section 4)")
     st.markdown(f"""
-    ##### ℹ️ Interpretasi (Section 4)
     - R² turun karena: (1) Loss of information, (2) Model sensitivity, (3) Overfitting
     - Data: {len(df_with)} → {len(df_no)} ({len(df_with) - len(df_no)} outlier dihapus)
     """)
@@ -583,20 +617,30 @@ with tabs[4]:
               delta=f"{(mse_xgb - mse_multi)/mse_multi*100:.1f}% vs OLS", delta_color="inverse")
     c2.metric("R²", f"{r2_xgb*100:.2f}%", delta=f"+{(r2_xgb - r2_multi)*100:.2f}% vs OLS")
     st.markdown(interpret_r2(r2_xgb))
+    st.divider()
     col_l, col_r = st.columns(2)
     with col_l:
+        st.markdown("##### 📋 Tabel Feature Importance")
         xgb_imp = model_xgb.feature_importances_
+        st.dataframe(pd.DataFrame({
+            "Fitur": feat_cols_xgb,
+            "Importance": [f"{v:.4f}" for v in xgb_imp]
+        }).sort_values(by="Importance", ascending=False), use_container_width=True, height=300)
+    with col_r:
         fig_xgb_imp = plot_feature_importance(xgb_imp, feat_cols_xgb, "XGBoost Feature Importance", "Greens")
         _show(fig_xgb_imp, "XGBoost · Feature Importance")
-    with col_r:
-        fig_xgb = plot_actual_vs_predicted(y_xgb, y_pred_xgb,
-                                            f"XGBoost · R² = {r2_xgb*100:.2f}%", C_GREEN)
-        _show(fig_xgb, "XGBoost · Actual vs Predicted")
+    st.divider()
+    st.markdown("##### 📈 Actual vs Predicted")
+    fig_xgb = plot_actual_vs_predicted(y_xgb, y_pred_xgb,
+                                        f"XGBoost · R² = {r2_xgb*100:.2f}%", C_GREEN)
+    _show(fig_xgb, "XGBoost · Actual vs Predicted")
+    st.divider()
     st.markdown("##### 📊 Analisis Residual")
     fig_rxgb = plot_residuals(y_xgb, y_pred_xgb, "Residual — XGBoost")
     _show(fig_rxgb, "XGBoost · Residual")
+    st.divider()
+    st.markdown("##### ℹ️ Interpretasi")
     st.markdown(f"""
-    ##### ℹ️ Interpretasi
     - R² = **{r2_xgb*100:.2f}%** vs Multivariate OLS = {r2_multi*100:.2f}%
     - XGBoost menangkap hubungan **non-linear** dan **interaksi antar fitur**
     - ⚠️ Hasil pada seluruh dataset — R² tinggi bisa indikasi *overfitting*
