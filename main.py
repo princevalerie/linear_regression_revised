@@ -29,10 +29,6 @@ def r_squared(y_true, y_pred):
     ss_tot = np.sum((y_true - np.mean(y_true)) ** 2)
     return 1 - ss_res / ss_tot
 
-def adj_r_squared(y_true, y_pred, n_features):
-    n = len(y_true)
-    r2 = r_squared(y_true, y_pred)
-    return 1 - (1 - r2) * (n - 1) / (n - n_features - 1)
 
 def remove_outliers_iqr(df: pd.DataFrame, col: str) -> pd.DataFrame:
     Q1 = df[col].quantile(0.25)
@@ -330,19 +326,15 @@ model_xgb, y_pred_xgb, y_xgb, mins_xgb, maxs_xgb, feat_cols_xgb = build_xgboost(
 
 mse_uni   = mse(y_uni, y_pred_uni)
 r2_uni    = r_squared(y_uni, y_pred_uni)
-adj_r2_uni = adj_r_squared(y_uni, y_pred_uni, 1)
 
 mse_multi   = mse(y_multi, y_pred_multi)
 r2_multi    = r_squared(y_multi, y_pred_multi)
-adj_r2_multi = adj_r_squared(y_multi, y_pred_multi, len(feat_cols))
 
 mse_no   = mse(y_no, y_pred_no)
 r2_no    = r_squared(y_no, y_pred_no)
-adj_r2_no = adj_r_squared(y_no, y_pred_no, len(feat_cols_no))
 
 mse_xgb   = mse(y_xgb, y_pred_xgb)
 r2_xgb    = r_squared(y_xgb, y_pred_xgb)
-adj_r2_xgb = adj_r_squared(y_xgb, y_pred_xgb, len(feat_cols_xgb))
 
 # ── STORE ALL METRICS FOR AI CONTEXT ───────────────────────────
 _beta_abs = np.abs(beta_multi[1:])
@@ -369,27 +361,23 @@ st.session_state["ai_metrics"] = {
     # Univariate
     "uni_mse": float(mse_uni),
     "uni_r2": float(r2_uni),
-    "uni_adj_r2": float(adj_r2_uni),
     "uni_rmse": float(np.sqrt(mse_uni)),
     "uni_beta": [float(b) for b in beta_uni],
     # Multivariate + Outlier
     "multi_mse": float(mse_multi),
     "multi_r2": float(r2_multi),
-    "multi_adj_r2": float(adj_r2_multi),
     "multi_rmse": float(np.sqrt(mse_multi)),
     "multi_beta": {k: float(v) for k, v in zip(["intercept"] + feat_cols, beta_multi)},
     "multi_importance": {k: round(v, 4) for k, v in zip(feat_cols, _beta_imp)},
     # Multivariate - Outlier
     "no_mse": float(mse_no),
     "no_r2": float(r2_no),
-    "no_adj_r2": float(adj_r2_no),
     "no_rmse": float(np.sqrt(mse_no)),
     "no_beta": {k: float(v) for k, v in zip(["intercept"] + feat_cols_no, beta_no)},
     "no_importance": {k: round(v, 4) for k, v in zip(feat_cols_no, _beta_imp_no)},
     # XGBoost
     "xgb_mse": float(mse_xgb),
     "xgb_r2": float(r2_xgb),
-    "xgb_adj_r2": float(adj_r2_xgb),
     "xgb_rmse": float(np.sqrt(mse_xgb)),
     "xgb_importance": {k: round(float(v), 4) for k, v in zip(feat_cols_xgb, model_xgb.feature_importances_)},
     # Correlation (price vs features)
@@ -492,10 +480,9 @@ with tabs[0]:
 with tabs[1]:
     st.subheader("Univariate Linear Regression")
     st.latex(r"y = \beta_0 + \beta_1 \times \text{area} + \epsilon \quad \text{(Equation 2)}")
-    c1, c2, c3 = st.columns(3)
+    c1, c2 = st.columns(2)
     c1.metric("MSE", f"{mse_uni:,.0f}")
     c2.metric("R²", f"{r2_uni*100:.2f}%")
-    c3.metric("Adjusted R²", f"{adj_r2_uni:.4f}")
     st.markdown(interpret_r2(r2_uni))
     col_l, col_r = st.columns([1, 2])
     with col_l:
@@ -523,10 +510,9 @@ with tabs[1]:
 with tabs[2]:
     st.subheader("Multivariate — Dengan Outlier")
     st.latex(r"y = \beta_0 + \beta_1 x_1 + \beta_2 x_2 + \cdots + \beta_n x_n + \epsilon \quad \text{(Equation 3)}")
-    c1, c2, c3 = st.columns(3)
+    c1, c2 = st.columns(2)
     c1.metric("MSE", f"{mse_multi:,.0f}")
     c2.metric("R²", f"{r2_multi*100:.2f}%", delta=f"+{(r2_multi - r2_uni)*100:.2f}% vs Uni")
-    c3.metric("Adjusted R²", f"{adj_r2_multi:.4f}")
     st.markdown(interpret_r2(r2_multi))
     col_l, col_r = st.columns(2)
     with col_l:
@@ -558,11 +544,10 @@ with tabs[2]:
 with tabs[3]:
     st.subheader("Multivariate — Tanpa Outlier")
     st.caption("Outlier pada `price` dihapus via IQR. Section 2.2.")
-    c1, c2, c3 = st.columns(3)
+    c1, c2 = st.columns(2)
     c1.metric("MSE", f"{mse_no:,.0f}")
     c2.metric("R²", f"{r2_no*100:.2f}%",
               delta=f"{(r2_no - r2_multi)*100:.2f}% vs +Outlier", delta_color="inverse")
-    c3.metric("Adjusted R²", f"{adj_r2_no:.4f}")
     st.markdown(interpret_r2(r2_no))
     st.warning(f"""
     ⚠️ **Outlier Paradox:** R² turun dari **{r2_multi*100:.2f}%** → **{r2_no*100:.2f}%** setelah outlier dihapus.  
@@ -593,11 +578,10 @@ with tabs[3]:
 with tabs[4]:
     st.subheader("🌲 XGBoost Regression")
     st.caption("Bonus: Paper Section 4 menyebutkan *\"XGBoost is superior to other models\"* [6, 16]")
-    c1, c2, c3 = st.columns(3)
+    c1, c2 = st.columns(2)
     c1.metric("MSE", f"{mse_xgb:,.0f}",
               delta=f"{(mse_xgb - mse_multi)/mse_multi*100:.1f}% vs OLS", delta_color="inverse")
     c2.metric("R²", f"{r2_xgb*100:.2f}%", delta=f"+{(r2_xgb - r2_multi)*100:.2f}% vs OLS")
-    c3.metric("Adjusted R²", f"{adj_r2_xgb:.4f}")
     st.markdown(interpret_r2(r2_xgb))
     col_l, col_r = st.columns(2)
     with col_l:
@@ -629,7 +613,6 @@ with tabs[5]:
         "R² Ours": [f"{r2_uni*100:.2f}%", f"{r2_multi*100:.2f}%",
                     f"{r2_no*100:.2f}%", f"{r2_xgb*100:.2f}%"],
         "MSE": [f"{mse_uni:,.0f}", f"{mse_multi:,.0f}", f"{mse_no:,.0f}", f"{mse_xgb:,.0f}"],
-        "Adj R²": [f"{adj_r2_uni:.4f}", f"{adj_r2_multi:.4f}", f"{adj_r2_no:.4f}", f"{adj_r2_xgb:.4f}"],
         "N Data": [len(df_with), len(df_with), len(df_no), len(df_with)]
     })
     st.dataframe(comp_df, use_container_width=True, hide_index=True)
@@ -751,7 +734,7 @@ with tabs[6]:
     st.markdown("""
     ##### ℹ️ Catatan Model
     - OLS dari scratch (tanpa sklearn) · Min-Max normalization · IQR outlier removal  
-    - Metrik: MSE (Eq. 4), R² (Eq. 5), Adjusted R²  
+    - Metrik: MSE (Eq. 4), R² (Eq. 5)  
     - Paper: *Predicting House Prices with a Linear Regression Model* (Liming Yan, 2024)
     """)
 

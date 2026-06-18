@@ -73,7 +73,7 @@ def _build_system_prompt():
 
     KEMAMPUAN:
     • Analisis dataset Housing.csv (545 baris, 13 kolom harga rumah)
-    • Jelaskan implementasi OLS, MSE, R², Adj R² dari source code
+    • Jelaskan implementasi OLS, MSE, R² dari source code
     • Bandingkan 4 model: Univariate, Multivariate ± Outlier, XGBoost
     • Debug code Python/Streamlit
     • Jawab tentang paper Liming Yan 2024
@@ -144,12 +144,12 @@ def _build_metrics_context():
         f"| Area median | {_num(m['area_median'])} sq ft |",
         "",
         "### Evaluasi Keempat Model",
-        f"| Model | MSE | RMSE | R² | Adj R² |",
-        f"|---|---|---|---|---|",
-        f"| Univariate (area only) | {_num(m['uni_mse'])} | {_num(m['uni_rmse'])} | {_pct(m['uni_r2'])} | {_f4(m['uni_adj_r2'])} |",
-        f"| Multivariate + Outlier | {_num(m['multi_mse'])} | {_num(m['multi_rmse'])} | {_pct(m['multi_r2'])} | {_f4(m['multi_adj_r2'])} |",
-        f"| Multivariate - Outlier | {_num(m['no_mse'])} | {_num(m['no_rmse'])} | {_pct(m['no_r2'])} | {_f4(m['no_adj_r2'])} |",
-        f"| XGBoost | {_num(m['xgb_mse'])} | {_num(m['xgb_rmse'])} | {_pct(m['xgb_r2'])} | {_f4(m['xgb_adj_r2'])} |",
+        f"| Model | MSE | RMSE | R² |",
+        f"|---|---|---|---|",
+        f"| Univariate (area only) | {_num(m['uni_mse'])} | {_num(m['uni_rmse'])} | {_pct(m['uni_r2'])} |",
+        f"| Multivariate + Outlier | {_num(m['multi_mse'])} | {_num(m['multi_rmse'])} | {_pct(m['multi_r2'])} |",
+        f"| Multivariate - Outlier | {_num(m['no_mse'])} | {_num(m['no_rmse'])} | {_pct(m['no_r2'])} |",
+        f"| XGBoost | {_num(m['xgb_mse'])} | {_num(m['xgb_rmse'])} | {_pct(m['xgb_r2'])} |",
         "",
         "### Koefisien OLS — Univariate",
         f"- β₀ (intercept): {m['uni_beta'][0]:,.2f}",

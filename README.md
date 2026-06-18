@@ -54,7 +54,6 @@ Semua fungsi diimplementasikan manual menggunakan **NumPy** saja:
 - **OLS**: `β = (XᵀX)⁻¹ Xᵀy`
 - **MSE**: `(1/n) Σ(yᵢ - ŷᵢ)²`
 - **R²**: `1 - SS_res / SS_tot`
-- **Adjusted R²**: `1 - (1-R²)(n-1)/(n-p-1)`
 - **Pearson Correlation**: dihitung manual per-kolom
 - **Outlier Removal**: IQR method pada kolom `price`
 - **Normalization**: Min-Max scaling
@@ -120,7 +119,7 @@ Data Cleaning
     ▼
 Min-Max Normalization
     │
-    ├─── Univariate OLS (area only) ──→ Evaluate (MSE, R², Adj R²)
+    ├─── Univariate OLS (area only) ──→ Evaluate (MSE, R²)
     │
     ├─── Multivariate OLS (all features) ──→ Evaluate + Feature Importance
     │
